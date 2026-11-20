@@ -1,0 +1,71 @@
+# Bellhaven sync - daily scrape + match.
+#
+# Runs run_pipeline.py, which only ADDS proposals to data/pipeline.db.
+# It never writes to the CRM; a person approves changes in the review app.
+
+name: Daily Bellhaven sync
+
+on:
+  schedule:
+    # GitHub cron runs in UTC. 11:00 UTC = 6:00 AM US Eastern (standard time).
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}   # "Run workflow" button for manual runs
+
+# Never let two runs overlap: both would restore and then save pipeline.db.
+concurrency:
+  group: daily-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      # WHY: pipeline.db is the memory of the pipeline. It stores every proposal
+      # and every decision (approved / rejected / applied). Re-runs skip any
+      # proposal already stored there; that is what stops rejected items from
+      # coming back. Each runner starts empty, so the database is restored at the
+      # start and saved at the end of every run.
+      # GitHub caches can't be overwritten, so each run saves under a new key
+      # (pipeline-db-<run id>-<attempt>), and restore-keys picks the most recent
+      # one that starts with "pipeline-db-".
+      - name: Restore pipeline.db from the previous run
+        uses: actions/cache/restore@v4
+        with:
+          path: data/pipeline.db
+          key: pipeline-db-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pipeline-db-
+
+      - name: Run pipeline (scrape + match, read-only)
+        env:
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+        run: python run_pipeline.py --verbose
+
+      # Save even if the run failed (e.g. the website looked broken, exit code 2),
+      # so the restored database is carried forward unchanged.
+      - name: Save pipeline.db for the next run
+        if: always() && hashFiles('data/pipeline.db') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/pipeline.db
+          key: pipeline-db-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # A downloadable copy so a reviewer can open it in the review app.
+      - name: Upload pipeline.db as a run artifact
+        if: always() && hashFiles('data/pipeline.db') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-db
+          path: data/pipeline.db
+          retention-days: 30
