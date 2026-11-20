@@ -1,0 +1,13 @@
+# Bellhaven sync - daily run at 6:00 AM (server's local time).
+#
+# Scrapes the Bellhaven website and runs the matcher. It only ADDS proposals
+# to data/pipeline.db for review; it never writes to the CRM. Approving
+# changes is always done by a person in the review app.
+#
+# Install on a Mac/Linux server:  crontab -e   then paste the line below,
+# replacing /path/to/bellhaven-sync with the real folder. Output is appended
+# to data/pipeline.log so failures (e.g. exit code 2 = website looked broken)
+# can be checked later.
+#
+# m h dom mon dow  command
+0 6 * * * cd /path/to/bellhaven-sync && .venv/bin/python run_pipeline.py --verbose >> data/pipeline.log 2>&1
